@@ -1,0 +1,118 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/05/CPU.hdl
+
+/**
+ * The Hack CPU (Central Processing unit), consisting of an ALU,
+ * two registers named A and D, and a program counter named PC.
+ * The CPU is designed to fetch and execute instructions written in
+ * the Hack machine language. In particular, functions as follows:
+ * Executes the inputted instruction according to the Hack machine
+ * language specification. The D and A in the language specification
+ * refer to CPU-resident registers, while M refers to the external
+ * memory location addressed by A, i.e. to Memory[A]. The inM input
+ * holds the value of this location. If the current instruction needs
+ * to write a value to M, the value is placed in outM, the address
+ * of the target location is placed in the addressM output, and the
+ * writeM control bit is asserted. (When writeM==0, any value may
+ * appear in outM). The outM and writeM outputs are combinational:
+ * they are affected instantaneously by the execution of the current
+ * instruction. The addressM and pc outputs are clocked: although they
+ * are affected by the execution of the current instruction, they commit
+ * to their new values only in the next time step. If reset==1 then the
+ * CPU jumps to address 0 (i.e. pc is set to 0 in next time step) rather
+ * than to the address resulting from executing the current instruction.
+ */
+
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M?
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+    //
+
+    // D Register
+    DRegister(in=AluOut, load=writeD, out=AluIn1);
+
+    // A Register
+    ARegister(in=aregin, load=writeAorTypeA, out=destAddr, out[0..14]=addressM);
+
+    Mux16(a=instruction, b=AluOut, sel=writeA, out=aregin);
+
+    // useInM == a bit of instruction
+    //   otherwise A value is used by ALU
+    Mux16(a=destAddr, b=inM, sel=instruction[12], out=AluIn2);
+
+    ALU(x=AluIn1, y=AluIn2,
+        zx=instruction[11],
+        nx=instruction[10],
+        zy=instruction[9],
+        ny=instruction[8],
+        f=instruction[7],
+        no=instruction[6],
+        out=outM, out=AluOut, zr=zr, ng=ng);
+
+    // ALU(x=AluIn1, y=AluIn2, zx=zx, nx=nx, zy=zy, ny=ny, f=f, no=no, out=outM, out=AluOut, zr=zr, ng=ng);
+    // And(a=typeC, b=instruction[11], out=zx);
+
+
+    // ifjump = 1 if jump exists
+    PC(in=destAddr, load=ifjump, inc=nojump, reset=reset, out[0..14]=pc);
+    Not(in=ifjump, out=nojump);
+
+    // typeA = 1 if the instruction type is A
+    //       = 0 if the instruction type is C
+    Not(in=instruction[15], out=typeA);
+    Not(in=typeA, out=typeC);
+
+    // If typeC:
+    //        jump        ... instruction[0..2]
+    //        destination ... instruction[3..5]
+    //        comp c      ... instruction[6..11]
+    //        comp a      ... instruction[12]
+
+    // ifjump is determined by two factors (textbook 5.3)
+    //     1. jump conditions    ... instruction[0..2]
+    //     2. evaluation results ... ng, zr
+    //          define pv = !(ng | zr)
+
+    //   001 & !ng & !zr
+    //   010 & !ng & !pv
+    //   011 & !ng
+    //   100 & !zr & !pv
+    //   101 & !zr
+    //   110 & !pv
+    //
+    //  --->  ifjump = typeC & (inst0 | !pv) & (inst1 | !zr) & (inst2 | !ng)
+    //
+    Or(a=ng, b=zr, out=notPv);
+    Not(in=zr, out=notZr);
+    Not(in=ng, out=notNg);
+    Or(a=instruction[0], b=notPv, out=cond1);
+    Or(a=instruction[1], b=notZr, out=cond2);
+    Or(a=instruction[2], b=notNg, out=cond3);
+    And(a=cond1, b=cond2, out=cond12);
+    And(a=cond12, b=cond3, out=cond123);
+    And(a=cond123, b=typeC, out=ifjump);
+
+    // writeM = 1 if LHS of type-c dest instruction contains "M"
+    And(a=typeC, b=instruction[3], out=writeM);
+
+    // writeD = 1 if LHS of type-c dest instruction contains "D"
+    And(a=typeC, b=instruction[4], out=writeD);
+
+    // writeA = 1 if LHS of type-c dest instruction contains "A"
+    And(a=typeC, b=instruction[5], out=writeA);
+    Or(a=writeA, b=typeA, out=writeAorTypeA);
+
+}
